@@ -108,6 +108,27 @@ func NewLexer(name string, r io.Reader, rec Record) (l *Lexer, err error) {
 	return
 }
 
+// run consumes input, emitting ItemType events until EOF is reached.
+func (l *Lexer) run() {
+	defer close(l.items)
+	eor := len(l.rec.States) - 1
+	for {
+		for i, state := range l.rec.States {
+			if !state.StateFn(l, state.ItemType, state.Emit) {
+				l.rec.ErrorFn(l)
+				break
+			}
+			if i == eor || l.eof {
+				l.Emit(ItemEOR)
+			}
+		}
+		if l.Peek() == EOF {
+			l.Emit(ItemEOF)
+			break
+		}
+	}
+}
+
 // NextItem returns the next Item from the input.
 func (l *Lexer) NextItem() Item {
 	item := <-l.items
@@ -230,27 +251,6 @@ func (l *Lexer) Skip() {
 	}
 }
 
-// run consumes input, emitting ItemType events until EOF is reached.
-func (l *Lexer) run() {
-	defer close(l.items)
-	eor := len(l.rec.States) - 1
-	for {
-		for i, state := range l.rec.States {
-			if !state.StateFn(l, state.ItemType, state.Emit) {
-				l.rec.ErrorFn(l)
-				break
-			}
-			if i == eor || l.eof {
-				l.Emit(ItemEOR)
-			}
-		}
-		if l.Peek() == EOF {
-			l.Emit(ItemEOF)
-			break
-		}
-	}
-}
-
 // SkipPast returns an ErrorFn that consumes a sequence of characters
 // that are not in the set s, and one or more instances of the
 // characters in the set s.  This is the equivalent of calling
@@ -334,9 +334,9 @@ func ExceptRun(invalid string) StateFn {
 	}
 }
 
-// QuotedString consumes a sequence of characters until an
-// unescaped quote or newline is encountered, and reports the sequence
-// as ItemType t.
+// QuotedString consumes a double-quote followed by a sequence of any
+// non-double-quote characters, unescaped newline and double-quote
+// characters are also consumed.
 func QuotedString(l *Lexer, t ItemType, emit bool) (success bool) {
 	r := l.Next()
 	if r != '"' {
