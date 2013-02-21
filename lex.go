@@ -17,12 +17,13 @@ package lexrec
 import (
 	"fmt"
 	"io"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 // eof indicates end of file for the input
-const eof = -1
+const EOF = -1
 
 // StateFn is a function that can consume characters from the input
 // and emit an lexed token item as ItemType t.  If emit is false the
@@ -139,7 +140,7 @@ func (l *Lexer) Next() rune {
 	}
 	if l.pos == len(l.buf) {
 		l.eof = true
-		return eof
+		return EOF
 	}
 	r, w := utf8.DecodeRune(l.buf[l.pos:])
 	l.width = w
@@ -155,40 +156,51 @@ func (l *Lexer) Peek() rune {
 	return r
 }
 
-// Accept consumes the next rune if it is c
-func (l *Lexer) Accept(c rune) bool {
-	if l.Next() == c {
+// Size returns the number of bytes in the current run of token characters
+func (l *Lexer) Size() int {
+	return l.pos - l.start
+}
+
+// Accept consumes the next rune if it in the valid set
+func (l *Lexer) Accept(valid string) bool {
+	if strings.IndexRune(valid, l.Next()) >= 0 {
 		return true
 	}
 	l.Backup()
 	return false
 }
 
-// AcceptRun consumes a run of rune c
-func (l *Lexer) AcceptRun(c rune) {
+// AcceptRun consumes a run of runes from the valid set.
+func (l *Lexer) AcceptRun(valid string) {
 	for {
 		r := l.Next()
-		if r != c || r == eof {
+		if r == EOF {
+			break
+		}
+		if strings.IndexRune(valid, r) >= 0 {
 			break
 		}
 	}
 	l.Backup()
 }
 
-// Except consumes the next rune if it's not rune c
-func (l *Lexer) Except(c rune) bool {
-	if c != l.Next() {
+// Except consumes the next rune if it's not in the invalid set
+func (l *Lexer) Except(invalid string) bool {
+	if strings.IndexRune(invalid, l.Next()) < 0 {
 		return true
 	}
 	l.Backup()
 	return false
 }
 
-// ExceptRun consumes a run of runes that are not rune c
-func (l *Lexer) ExceptRun(c rune) {
+// ExceptRun consumes a run of runes that are not in the invalid set
+func (l *Lexer) ExceptRun(invalid string) {
 	for {
 		r := l.Next()
-		if r == c || r == eof {
+		if r == EOF {
+			break
+		}
+		if strings.IndexRune(invalid, r) >= 0 {
 			break
 		}
 	}
@@ -218,17 +230,21 @@ func (l *Lexer) Skip() {
 	}
 }
 
-// run consumes input, emitting ItemType events until eof is reached.
+// run consumes input, emitting ItemType events until EOF is reached.
 func (l *Lexer) run() {
 	defer close(l.items)
+	eor := len(l.rec.States) - 1
 	for {
-		for _, state := range l.rec.States {
+		for i, state := range l.rec.States {
 			if !state.StateFn(l, state.ItemType, state.Emit) {
 				l.rec.ErrorFn(l)
 				break
 			}
+			if i == eor || l.eof {
+				l.Emit(ItemEOR)
+			}
 		}
-		if l.Peek() == eof {
+		if l.Peek() == EOF {
 			l.Emit(ItemEOF)
 			break
 		}
@@ -236,20 +252,21 @@ func (l *Lexer) run() {
 }
 
 // SkipPast returns an ErrorFn that consumes a sequence of characters
-// that are not c, and one or more instances of c.  This is the
-// equivalent of calling ExceptRun(c) followed by AcceptRun(c).
-func SkipPast(c rune) ErrorFn {
+// that are not in the set s, and one or more instances of the
+// characters in the set s.  This is the equivalent of calling
+// ExceptRun(s) followed by AcceptRun(s).
+func SkipPast(s string) ErrorFn {
 	return func(l *Lexer) {
-		l.ExceptRun(c)
-		l.AcceptRun(c)
+		l.ExceptRun(s)
+		l.AcceptRun(s)
 	}
 }
 
-// Accept returns a StateFn that consumes one character c, emitting an
-// error if it is not found.
-func Accept(c rune) StateFn {
+// Accept returns a StateFn that consumes one character from the valid
+// set, emitting an error if one is not found.
+func Accept(valid string) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		if l.Accept(c) {
+		if l.Accept(valid) {
 			if emit {
 				l.Emit(t)
 			} else {
@@ -257,17 +274,16 @@ func Accept(c rune) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected character %q, got %q", c, l.Peek())
+		l.Errorf("expected character from the set [%q], got %q", valid, l.Peek())
 		return false
 	}
 }
 
-// AcceptRun returns a StateFn that consumes a run of character c from
-// the input, emitting an error if
-// it is are found.
-func AcceptRun(c rune) StateFn {
+// AcceptRun returns a StateFn that consumes a run of runes from the
+// input, emitting an error if none are found.
+func AcceptRun(valid string) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		l.AcceptRun(c)
+		l.AcceptRun(valid)
 		if l.pos > l.start {
 			if emit {
 				l.Emit(t)
@@ -276,16 +292,17 @@ func AcceptRun(c rune) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a run of character %q, got %q", c, l.Peek())
+		l.Errorf("expected a run of characters from the set [%q], got %q", valid, l.Peek())
 		return false
 	}
 }
 
 // Except returns a StateFn that consumes one character from the input
-// if it is not c, or emitting an error if the next character is c.
-func Except(c rune) StateFn {
+// that are not in the invalid set, emitting an error if the first
+// character read is in the invalid set.
+func Except(invalid string) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		if l.Except(c) {
+		if l.Except(invalid) {
 			if emit {
 				l.Emit(t)
 			} else {
@@ -293,17 +310,17 @@ func Except(c rune) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a character other than %q", c)
+		l.Errorf("expected a character outside the set [%q], got %q", invalid, l.Peek())
 		return false
 	}
 }
 
 // ExceptRun returns a StateFn that consumes a run of characters that
-// are not c.  If no characters are consumed before c is encountered,
-// an error is emitted.
-func ExceptRun(c rune) StateFn {
+// are not in the invalid set.  If no characters are consumed before
+// an invalid set rune is encountered, an error is emitted.
+func ExceptRun(invalid string) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		l.ExceptRun(c)
+		l.ExceptRun(invalid)
 		if l.pos > l.start {
 			if emit {
 				l.Emit(t)
@@ -312,7 +329,7 @@ func ExceptRun(c rune) StateFn {
 			}
 			return true
 		}
-		l.Errorf("got unexpected character %q", c)
+		l.Errorf("expected a character outside the set [%q], got %q", invalid, l.Peek())
 		return false
 	}
 }
@@ -335,7 +352,7 @@ func QuotedString(l *Lexer, t ItemType, emit bool) (success bool) {
 			l.Errorf("unterminated quote")
 			l.Backup()
 			return false
-		case eof:
+		case EOF:
 			l.Errorf("unterminated quote")
 			return false
 		case '"':
@@ -350,7 +367,7 @@ func QuotedString(l *Lexer, t ItemType, emit bool) (success bool) {
 	return false
 }
 
-// Integer consumes digits 0-9
+// Integer consumes unicode digits
 func Integer(l *Lexer, t ItemType, emit bool) (success bool) {
 	for {
 		r := l.Next()
@@ -390,39 +407,4 @@ func Letters(l *Lexer, t ItemType, emit bool) (success bool) {
 		}
 	}
 	return false
-}
-
-// NumericTz consumes a timezone field in the format [+-]HHMM or [+-]HH:MM
-func NumericTz(l *Lexer, t ItemType, emit bool) (success bool) {
-	r := l.Next()
-	if r != '+' && r != '-' {
-		l.Errorf("expected timezone sign [+-], got %q", r)
-		l.Backup()
-		return false
-	}
-	for i := 0; i < 2; i++ {
-		r = l.Next()
-		if !unicode.IsDigit(r) {
-			l.Errorf("expected [0-9], got %q", r)
-			l.Backup()
-			return false
-		}
-	}
-	if l.Peek() == ':' {
-		l.Next()
-	}
-	for i := 0; i < 2; i++ {
-		r = l.Next()
-		if !unicode.IsDigit(r) {
-			l.Errorf("expected [0-9], got %q", r)
-			l.Backup()
-			return false
-		}
-	}
-	if emit {
-		l.Emit(t)
-	} else {
-		l.Skip()
-	}
-	return true
 }
