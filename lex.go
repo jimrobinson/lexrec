@@ -1,17 +1,37 @@
-// Much of this is inspired by and derived from Rob Pike's template
-// parsing library (http://golang.org/pkg/text/template/parse/).
-//
-// Unlike the original code, this lexer is meant to handle reading
-// staticly defined formats, so the StateFn won't necessarily know the
-// proper order of the next token.  Instead we initialize the lexer
-// with a Record that lists an array of Binding, defining the order of
-// the StateFn for each record.
-//
-// The lexer is not expected hold the entire input in memory, instead
-// the Record defines the size of the initial read buffer which will
-// be used to read chunks of an io.Reader.  This buffer size will be
-// increased as necessary.
+/*
+Package lexrec implements a library for parsing fixed format records.
 
+The caller defines a Record that consists of
+
+ - Buflen, indicating the expected size the average record, in bytes.
+   This is used as a hint to manage the size of the read-ahead buffer.
+   The buffer will be expanded to at least this size on the first
+   read, and it will be increased as needed if a token crosses
+   multiple read boundaries.
+
+ - a States, a slice of Binding.  Each Binding consists of an
+   ItemType, a StateFn, and a boolean indicating whether or not the
+   token should be emitted on success.
+
+ - ErrorFn, a function to call if one of the StateFn returns false,
+   indicating an error state.  ErrorFn shoould recover the Lexer,
+   typically this would be accomplished by skipping the remainder of
+   the record.
+
+The Lexer will iterate over States, calling each StateFn in turn. On
+success the StateFn will emit the ItemType or not, depending on the
+value of the emit boolean.
+
+The caller can iterate over NextItem(), looking for the ItemType
+events that interest them.
+
+Once the end of States is reached, an ItemEOR will be emitted.  Once
+the end of the input has been reached an ItemEOF will be emitted.
+
+Much of this library was inspired by and derived from by Rob Pike's
+template parsing libary (http://golang.org/pkg/text/template/parse/).
+Any elegant bits in this library are from his original library.
+*/
 package lexrec
 
 import (
@@ -63,8 +83,8 @@ type Binding struct {
 // Record represents a log record
 type Record struct {
 	Buflen  int       // size of initial buffer, this will be grown as necessary
-	ErrorFn ErrorFn   // error function to apply if the lexer encounters a malformed record
 	States  []Binding // lexer states that make up a record
+	ErrorFn ErrorFn   // error function to apply if the lexer encounters a malformed record
 }
 
 // lexer holds the state of the scanner
@@ -182,6 +202,11 @@ func (l *Lexer) Size() int {
 	return l.pos - l.start
 }
 
+// Bytes returns the bytes in the current run of token characters
+func (l *Lexer) Bytes() []byte {
+	return l.buf[l.start:l.pos]
+}
+
 // Accept consumes the next rune if it in the valid set
 func (l *Lexer) Accept(valid string) bool {
 	if strings.IndexRune(valid, l.Next()) >= 0 {
@@ -244,10 +269,16 @@ func (l *Lexer) Emit(t ItemType) {
 
 // Skip advances over the current item without reporting it
 func (l *Lexer) Skip() {
-	if l.pos < l.rec.Buflen/2 {
-		l.start = l.pos
-	} else {
+	// We're at a point where we know we have completely read a
+	// token.  If we've read 90% of an l.buf's capacity, shift the
+	// unread content to the start of the buffer.  Otherwise just
+	// move l.start to the current position.
+	n := cap(l.buf)
+	r := n - l.pos
+	if n/10 >= r {
 		l.buf, l.start, l.pos = append(l.buf[0:0], l.buf[l.pos:]...), 0, 0
+	} else {
+		l.start = l.pos
 	}
 }
 
@@ -274,7 +305,7 @@ func Accept(valid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected character from the set [%q], got %q", valid, l.Peek())
+		l.Errorf("expected character from the set %q, got %q", valid, l.Peek())
 		return false
 	}
 }
@@ -292,7 +323,7 @@ func AcceptRun(valid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a run of characters from the set [%q], got %q", valid, l.Peek())
+		l.Errorf("expected a run of characters from the set %q, got %q", valid, l.Peek())
 		return false
 	}
 }
@@ -310,7 +341,7 @@ func Except(invalid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a character outside the set [%q], got %q", invalid, l.Peek())
+		l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
 		return false
 	}
 }
@@ -329,15 +360,15 @@ func ExceptRun(invalid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a character outside the set [%q], got %q", invalid, l.Peek())
+		l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
 		return false
 	}
 }
 
-// QuotedString consumes a double-quote followed by a sequence of any
+// Quote consumes a double-quote followed by a sequence of any
 // non-double-quote characters, unescaped newline and double-quote
 // characters are also consumed.
-func QuotedString(l *Lexer, t ItemType, emit bool) (success bool) {
+func Quote(l *Lexer, t ItemType, emit bool) (success bool) {
 	r := l.Next()
 	if r != '"' {
 		l.Errorf("expected '\"', got %q", r)
@@ -367,8 +398,8 @@ func QuotedString(l *Lexer, t ItemType, emit bool) (success bool) {
 	return false
 }
 
-// Integer consumes unicode digits
-func Integer(l *Lexer, t ItemType, emit bool) (success bool) {
+// Digits consumes unicode digits
+func Digits(l *Lexer, t ItemType, emit bool) (success bool) {
 	for {
 		r := l.Next()
 		if !unicode.IsDigit(r) {
@@ -407,4 +438,79 @@ func Letters(l *Lexer, t ItemType, emit bool) (success bool) {
 		}
 	}
 	return false
+}
+
+// Spaces consumes unicode spaces
+func Spaces(l *Lexer, t ItemType, emit bool) (success bool) {
+	for {
+		r := l.Next()
+		if !unicode.IsSpace(r) {
+			l.Backup()
+			if l.pos > l.start {
+				if emit {
+					l.Emit(t)
+				} else {
+					l.Skip()
+				}
+				return true
+			}
+			l.Errorf("expected whitespace, got %q", r)
+			return false
+		}
+	}
+	return false
+}
+
+// Number scans a number: decimal, octal, hex, float, or imaginary.
+// This method is taken from the go text/templates/parser package, and
+// has the same limitations.
+func Number(l *Lexer, t ItemType, emit bool) bool {
+	if !l.scanNumber() {
+		l.Errorf("bad number syntax: %q", l.buf[l.start:l.pos])
+		return false
+	}
+	if sign := l.Peek(); sign == '+' || sign == '-' {
+		// Complex: 1+2i. No spaces, must end in 'i'.
+		if !l.scanNumber() || l.buf[l.pos-1] != 'i' {
+			l.Errorf("bad number syntax: %q", l.buf[l.start:l.pos])
+			return false
+		}
+	}
+	if emit {
+		l.Emit(t)
+	} else {
+		l.Skip()
+	}
+	return true
+}
+
+func (l *Lexer) scanNumber() bool {
+	// Optional leading sign.
+	l.Accept("+-")
+	// Is it hex?
+	digits := "0123456789"
+	if l.Accept("0") && l.Accept("xX") {
+		digits = "0123456789abcdefABCDEF"
+	}
+	l.AcceptRun(digits)
+	if l.Accept(".") {
+		l.AcceptRun(digits)
+	}
+	if l.Accept("eE") {
+		l.Accept("+-")
+		l.AcceptRun("0123456789")
+	}
+	// Is it imaginary?
+	l.Accept("i")
+	// Next thing mustn't be alphanumeric.
+	if isAlphaNumeric(l.Peek()) {
+		l.Next()
+		return false
+	}
+	return true
+}
+
+// isAlphaNumeric reports whether r is an alphabetic, digit, or underscore.
+func isAlphaNumeric(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
