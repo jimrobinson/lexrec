@@ -160,13 +160,14 @@ func cat(path string, r io.Reader) {
 		item := l.NextItem()
 		if item.Type == lexrec.ItemEOF {
 			break
+		} else if item.Type == lexrec.ItemError {
+			fmt.Printf("%s at %s:%d\n", item.Value, path, item.Pos)
+			buf.Reset()
+			continue
 		}
 		switch item.Type {
 		default:
 			buf.WriteByte(' ')
-		case lexrec.ItemError:
-			fmt.Printf("%s at %s:%d\n", item.Value, path, item.Pos)
-			buf.Reset()
 		case ItemRemoteHost:
 			// start of a new record
 		case ItemRequestDay:
