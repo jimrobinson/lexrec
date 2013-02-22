@@ -284,12 +284,18 @@ func (l *Lexer) Skip() {
 
 // SkipPast returns an ErrorFn that consumes a sequence of characters
 // that are not in the set s, and one or more instances of the
-// characters in the set s.  This is the equivalent of calling
-// ExceptRun(s) followed by AcceptRun(s).
+// characters in the set s.
 func SkipPast(s string) ErrorFn {
 	return func(l *Lexer) {
 		l.ExceptRun(s)
+		if l.Size() != 0 {
+			l.Skip()
+		}
+
 		l.AcceptRun(s)
+		if l.Size() != 0 {
+			l.Skip()
+		}
 	}
 }
 
