@@ -1,0 +1,3 @@
+127.0.0.1 user-identifier frank1 [10/Oct/2000:13:55:36 -0700] "GET /apache_1.gif HTTP/1.0" 200 2326
+127.0.0.2 user-identifier frank2 [10/Oct/2000:13:55:37 -0700] "GET /apache_2.gif HTTP/1.0" 200 2327
+127.0.0.3 user-identifier frank3 [10/Oct/2000:13:55:38 -0700] "GET /apache_3.gif HTTP/1.0" 200 2328
