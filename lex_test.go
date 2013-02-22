@@ -10,7 +10,7 @@ const (
 	ItemEmit
 )
 
-var acceptRunA = AcceptRun("a")
+var acceptRunA = AcceptRun("a", true)
 
 var aRecord = Record{
 	Buflen:  1,
