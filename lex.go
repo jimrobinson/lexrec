@@ -9,7 +9,7 @@ The caller defines a Record that consists of
    read, and it will be increased as needed if a token crosses
    multiple read boundaries.
 
- - a States, a slice of Binding.  Each Binding consists of an
+ - States, a slice of Binding.  Each Binding consists of an
    ItemType, a StateFn, and a boolean indicating whether or not the
    token should be emitted on success.
 
