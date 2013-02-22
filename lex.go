@@ -207,7 +207,7 @@ func (l *Lexer) Bytes() []byte {
 	return l.buf[l.start:l.pos]
 }
 
-// Accept consumes the next rune if it in the valid set
+// Accept consumes the next rune if it in the valid set, returning true on success.
 func (l *Lexer) Accept(valid string) bool {
 	if strings.IndexRune(valid, l.Next()) >= 0 {
 		return true
@@ -216,8 +216,17 @@ func (l *Lexer) Accept(valid string) bool {
 	return false
 }
 
-// AcceptRun consumes a run of runes from the valid set.
-func (l *Lexer) AcceptRun(valid string) {
+// Except consumes the next rune if it's not in the invalid set, returning true on success.
+func (l *Lexer) Except(invalid string) bool {
+	if strings.IndexRune(invalid, l.Next()) < 0 {
+		return true
+	}
+	l.Backup()
+	return false
+}
+
+// AcceptRun consumes a run of runes from the valid set, returning true on success.
+func (l *Lexer) AcceptRun(valid string) bool {
 	for {
 		r := l.Next()
 		if r == EOF {
@@ -228,19 +237,11 @@ func (l *Lexer) AcceptRun(valid string) {
 		}
 	}
 	l.Backup()
+	return l.pos > l.start
 }
 
-// Except consumes the next rune if it's not in the invalid set
-func (l *Lexer) Except(invalid string) bool {
-	if strings.IndexRune(invalid, l.Next()) < 0 {
-		return true
-	}
-	l.Backup()
-	return false
-}
-
-// ExceptRun consumes a run of runes that are not in the invalid set
-func (l *Lexer) ExceptRun(invalid string) {
+// ExceptRun consumes a run of runes that are not in the invalid set, returning true on success.
+func (l *Lexer) ExceptRun(invalid string) bool {
 	for {
 		r := l.Next()
 		if r == EOF {
@@ -251,6 +252,7 @@ func (l *Lexer) ExceptRun(invalid string) {
 		}
 	}
 	l.Backup()
+	return l.pos > l.start
 }
 
 // Backup steps back one rune.  Can only be called once per call of Next.
@@ -287,21 +289,19 @@ func (l *Lexer) Skip() {
 // characters in the set s.
 func SkipPast(s string) ErrorFn {
 	return func(l *Lexer) {
-		l.ExceptRun(s)
-		if l.Size() != 0 {
+		if l.ExceptRun(s) {
 			l.Skip()
 		}
-
-		l.AcceptRun(s)
-		if l.Size() != 0 {
+		if l.AcceptRun(s) {
 			l.Skip()
 		}
 	}
 }
 
 // Accept returns a StateFn that consumes one character from the valid
-// set, emitting an error if one is not found.
-func Accept(valid string) StateFn {
+// set.  If needed is true and if no character is consumed, an error
+// is emitted.
+func Accept(valid string, needed bool) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
 		if l.Accept(valid) {
 			if emit {
@@ -311,17 +311,19 @@ func Accept(valid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected character from the set %q, got %q", valid, l.Peek())
+		if needed {
+			l.Errorf("expected character from the set %q, got %q", valid, l.Peek())
+		}
 		return false
 	}
 }
 
 // AcceptRun returns a StateFn that consumes a run of runes from the
-// input, emitting an error if none are found.
-func AcceptRun(valid string) StateFn {
+// input.  If needed is true and if no characters are consumed, an
+// error is emitted.
+func AcceptRun(valid string, needed bool) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		l.AcceptRun(valid)
-		if l.pos > l.start {
+		if l.AcceptRun(valid) {
 			if emit {
 				l.Emit(t)
 			} else {
@@ -329,15 +331,17 @@ func AcceptRun(valid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a run of characters from the set %q, got %q", valid, l.Peek())
+		if needed {
+			l.Errorf("expected a run of characters from the set %q, got %q", valid, l.Peek())
+		}
 		return false
 	}
 }
 
 // Except returns a StateFn that consumes one character from the input
-// that are not in the invalid set, emitting an error if the first
-// character read is in the invalid set.
-func Except(invalid string) StateFn {
+// that are not in the invalid set. If needed is true and no
+// characters are consumed, an error is emitted.
+func Except(invalid string, needed bool) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
 		if l.Except(invalid) {
 			if emit {
@@ -347,18 +351,19 @@ func Except(invalid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
+		if needed {
+			l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
+		}
 		return false
 	}
 }
 
 // ExceptRun returns a StateFn that consumes a run of characters that
-// are not in the invalid set.  If no characters are consumed before
-// an invalid set rune is encountered, an error is emitted.
-func ExceptRun(invalid string) StateFn {
+// are not in the invalid set.  If needed is true and if no characters
+// are consumed, an error is emitted.
+func ExceptRun(invalid string, needed bool) StateFn {
 	return func(l *Lexer, t ItemType, emit bool) bool {
-		l.ExceptRun(invalid)
-		if l.pos > l.start {
+		if l.ExceptRun(invalid) {
 			if emit {
 				l.Emit(t)
 			} else {
@@ -366,14 +371,18 @@ func ExceptRun(invalid string) StateFn {
 			}
 			return true
 		}
-		l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
+		if needed {
+			l.Errorf("expected a character outside the set %q, got %q", invalid, l.Peek())
+		}
 		return false
 	}
 }
 
 // Quote consumes a double-quote followed by a sequence of any
 // non-double-quote characters, unescaped newline and double-quote
-// characters are also consumed.
+// characters are also consumed.  An error is emitted if an unescaped
+// terminating quote is not found.  Escaped newlines are allowed
+// within the quoted text.
 func Quote(l *Lexer, t ItemType, emit bool) (success bool) {
 	r := l.Next()
 	if r != '"' {
