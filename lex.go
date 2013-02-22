@@ -223,7 +223,7 @@ func (l *Lexer) AcceptRun(valid string) {
 		if r == EOF {
 			break
 		}
-		if strings.IndexRune(valid, r) >= 0 {
+		if strings.IndexRune(valid, r) < 0 {
 			break
 		}
 	}
