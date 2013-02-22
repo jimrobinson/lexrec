@@ -10,8 +10,8 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/jimrobinson/lexrec"
 	"io"
-	"jimrobinson/lexrec"
 	"log"
 	"os"
 )
