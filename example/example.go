@@ -10,7 +10,8 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/jimrobinson/lexrec"
+	//"github.com/jimrobinson/lexrec"
+	"jimrobinson/lexrec"
 	"io"
 	"log"
 	"os"
@@ -36,34 +37,34 @@ const (
 )
 
 // accept a run of non-space characters
-var acceptNotSpace = lexrec.ExceptRun(" ")
+var acceptNotSpace = lexrec.ExceptRun(" ", true)
 
 // accept a single space
-var acceptSpace = lexrec.Accept(" ")
+var acceptSpace = lexrec.Accept(" ", true)
 
 // accept a single open brace ('[')
-var acceptOpenBrace = lexrec.Accept("[")
+var acceptOpenBrace = lexrec.Accept("[", true)
 
 // accept a single slash ('/')
-var acceptSlash = lexrec.Accept("/")
+var acceptSlash = lexrec.Accept("/", true)
 
 // accept a single colon (':')
-var acceptColon = lexrec.Accept(":")
+var acceptColon = lexrec.Accept(":", true)
 
 // accept a single close brace (']')
-var acceptCloseBrace = lexrec.Accept("]")
+var acceptCloseBrace = lexrec.Accept("]", true)
 
 // accept a single double-quote ('"')
-var acceptQuote = lexrec.Accept(`"`)
+var acceptQuote = lexrec.Accept(`"`, true)
 
 // accept a run of non-double-quote characters
-var acceptNotQuote = lexrec.ExceptRun(`"`)
+var acceptNotQuote = lexrec.ExceptRun(`"`, true)
 
 // accept a single newline ('\n')
-var acceptNewline = lexrec.Accept("\n")
+var acceptNewline = lexrec.Accept("\n", true)
 
 // accept a run of non-newline characters
-var acceptNotNewline = lexrec.ExceptRun("\n")
+var acceptNotNewline = lexrec.ExceptRun("\n", true)
 
 // ncsaRecord defines the NCSA Common Log Format
 var ncsaRecord = lexrec.Record{
@@ -100,14 +101,29 @@ var ncsaRecord = lexrec.Record{
 		{ItemRequestProtocol, acceptNotQuote, true}, // HTTP protocol
 		{ItemIgnore, acceptQuote, false},            // "
 		{ItemIgnore, acceptSpace, false},            // ' '
-		{ItemResponseStatus, acceptNotSpace, true},  // response status code (a number, e.g., 200,  or '-')
+		{ItemResponseStatus, digitsOrMinus, true},   // response status code (a number, e.g., 200,  or '-')
 		{ItemIgnore, acceptSpace, false},            // ' '
-		{ItemResponseBytes, acceptNotNewline, true}, // response bytes (a number, e.g., 10, or '-')
+		{ItemResponseBytes, digitsOrMinus, true},    // response bytes (a number, e.g., 10, or '-')
 		{ItemIgnore, acceptNewline, false},          // '\n'
 	}}
 
 const sign = "+-"
 const digits = "0123456789"
+
+// digitsOrMinus consumes either a sequence of digits or the single
+// char '-' followed by a space.
+func digitsOrMinus(l *lexrec.Lexer, t lexrec.ItemType, emit bool) (success bool) {
+	if l.AcceptRun(digits) || (l.Accept("-") && l.Peek() == ' ') {
+		if emit {
+			l.Emit(t)
+		} else {
+			l.Skip()
+		}
+		return true
+	}
+	l.Errorf("expected a '-' or a sequence of %q, got %q", digits, l.Peek())
+	return false
+}
 
 // numericTz consumes a timezone field in the format [+-]HHMM or [+-]HH:MM
 func numericTz(l *lexrec.Lexer, t lexrec.ItemType, emit bool) (success bool) {
