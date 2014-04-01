@@ -45,6 +45,9 @@ import (
 // eof indicates end of file for the input
 const EOF = -1
 
+// RunFn is a function that can drive a Lexer
+type RunFn func(l *Lexer)
+
 // StateFn is a function that can consume characters from the input
 // and emit an lexed token item as ItemType t.  If emit is false the
 // item will be consumed but not transmitted.
@@ -87,6 +90,14 @@ type Record struct {
 	ErrorFn ErrorFn   // error function to apply if the lexer encounters a malformed record
 }
 
+func NewRecord(n int, states []Binding, errorFn ErrorFn) Record {
+	return Record{
+		Buflen:  n,
+		States:  states,
+		ErrorFn: errorFn,
+	}
+}
+
 // lexer holds the state of the scanner
 type Lexer struct {
 	name    string    // name of the input; used only for error reports
@@ -125,6 +136,33 @@ func NewLexer(name string, r io.Reader, rec Record) (l *Lexer, err error) {
 		eof:   false,
 	}
 	go l.run()
+	return
+}
+
+// NewLexerRun returns a lexer for rec records from the UTF-8 reader
+// r, and driving the lexer using RunFn instead of iterating over
+// rec.States.  The name is only used for debugging messages.
+func NewLexerRun(name string, r io.Reader, rec Record, runFn RunFn) (l *Lexer, err error) {
+	if rec.Buflen < 1 {
+		err = fmt.Errorf("rec.Buflen must be > 0: %d", rec.Buflen)
+		return
+	}
+	if rec.ErrorFn == nil {
+		err = fmt.Errorf("rec.ErrorFn must not be nil")
+		return
+	}
+	l = &Lexer{
+		name:  name,
+		r:     r,
+		rec:   rec,
+		items: make(chan Item),
+		eof:   false,
+	}
+	go func(l *Lexer, runFn RunFn) {
+		defer close(l.items)
+		runFn(l)
+	}(l, runFn)
+
 	return
 }
 
