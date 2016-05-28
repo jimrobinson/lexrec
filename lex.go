@@ -105,7 +105,8 @@ type Lexer struct {
 	rec     Record    // log record definition
 	items   chan Item // channel of lexed items
 	eof     bool      // end of file reached?
-	buf     []byte    // buffer of bytes read from r
+	next    []byte    // buffer of bytes to read from r and append to buf
+	buf     []byte    // buffer of bytes to hold a complete token
 	rpos    int64     // current position in input
 	pos     int       // current position in buf
 	start   int       // start position of item in buf
@@ -133,6 +134,7 @@ func NewLexer(name string, r io.Reader, rec Record) (l *Lexer, err error) {
 		r:     r,
 		rec:   rec,
 		items: make(chan Item),
+		next:  make([]byte, rec.Buflen),
 		eof:   false,
 	}
 	go l.run()
@@ -156,6 +158,7 @@ func NewLexerRun(name string, r io.Reader, rec Record, runFn RunFn) (l *Lexer, e
 		r:     r,
 		rec:   rec,
 		items: make(chan Item),
+		next:  make([]byte, rec.Buflen),
 		eof:   false,
 	}
 	go func(l *Lexer, runFn RunFn) {
@@ -209,10 +212,9 @@ func (l *Lexer) Next() rune {
 	// read more of the input if if we've reached the end of the
 	// buffer or if we might be on a character boundry.
 	if (len(l.buf) - l.pos) < utf8.UTFMax {
-		next := make([]byte, l.rec.Buflen)
-		n, err := l.r.Read(next)
+		n, err := l.r.Read(l.next)
 		if err == nil {
-			l.buf = append(l.buf, next[0:n]...)
+			l.buf = append(l.buf, l.next[0:n]...)
 		} else if err != io.EOF {
 			l.Errorf("%s: %v", l.name, err)
 		}
