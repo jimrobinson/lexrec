@@ -213,10 +213,10 @@ func (l *Lexer) Next() rune {
 	// buffer or if we might be on a character boundry.
 	if (len(l.buf) - l.pos) < utf8.UTFMax {
 		n, err := l.r.Read(l.next)
-		if n > 0 {
-			l.buf = append(l.buf, l.next[0:n]...)
-		} else if err != nil && err != io.EOF {
+		if err != nil && err != io.EOF {
 			l.Errorf("%s: %v", l.name, err)
+		} else if n > 0 {
+			l.buf = append(l.buf, l.next[0:n]...)
 		}
 	}
 	if l.pos == len(l.buf) {
