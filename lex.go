@@ -209,13 +209,13 @@ func (l *Lexer) Errorf(format string, args ...interface{}) {
 
 // Next consumes the next rune in the input.
 func (l *Lexer) Next() rune {
-	// read more of the input if if we've reached the end of the
+	// read more of the input if we've reached the end of the
 	// buffer or if we might be on a character boundry.
 	if (len(l.buf) - l.pos) < utf8.UTFMax {
 		n, err := l.r.Read(l.next)
-		if err == nil {
+		if n > 0 {
 			l.buf = append(l.buf, l.next[0:n]...)
-		} else if err != io.EOF {
+		} else if err != nil && err != io.EOF {
 			l.Errorf("%s: %v", l.name, err)
 		}
 	}
@@ -227,6 +227,7 @@ func (l *Lexer) Next() rune {
 	l.width = w
 	l.pos += w
 	l.rpos += int64(w)
+
 	return r
 }
 
@@ -450,7 +451,6 @@ func Quote(l *Lexer, t ItemType, emit bool) (success bool) {
 			return true
 		}
 	}
-	return false
 }
 
 // Digits consumes unicode digits
@@ -471,7 +471,6 @@ func Digits(l *Lexer, t ItemType, emit bool) (success bool) {
 			return false
 		}
 	}
-	return false
 }
 
 // Letters consumes unicode letters
@@ -492,7 +491,6 @@ func Letters(l *Lexer, t ItemType, emit bool) (success bool) {
 			return false
 		}
 	}
-	return false
 }
 
 // Spaces consumes unicode spaces
@@ -513,7 +511,6 @@ func Spaces(l *Lexer, t ItemType, emit bool) (success bool) {
 			return false
 		}
 	}
-	return false
 }
 
 // Number scans a number: decimal, octal, hex, float, or imaginary.
